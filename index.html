@@ -133,7 +133,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   </div>
 
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.6</div>
+  <div class="ver">v0.7</div>
 </div>
 
 <script>
@@ -685,8 +685,10 @@ nickInput.addEventListener('change', () => {
   try{ localStorage.setItem('pop10-nick', nick); }catch(e){}
 });
 nickInput.addEventListener('keydown', e => { if (e.key === 'Enter') nickInput.blur(); });
+nickInput.addEventListener('input', () => { const v = cleanNick(nickInput.value); if (v){ nick = v; try{ localStorage.setItem('pop10-nick', nick); }catch(e){} } });
 
 function lbInit(){
+  setTimeout(() => { if (LB.status === 'loading'){ LB.err = 'tiempo agotado: ¿cargó firebase-config.js?'; LB.status = 'offline'; lbRender(); } }, 8000);
   const go = api => {
     LB.api = api;
     api.init().then(uid => {
@@ -697,11 +699,11 @@ function lbInit(){
           const me = rows.find(r => r.id === LB.uid);
           if (me) LB.mine[m] = Math.max(LB.mine[m], me.score);
           lbRender();
-        }, () => { LB.status = 'offline'; lbRender(); });
+        }, err => { LB.err = err && (err.code || err.message); LB.status = 'offline'; lbRender(); });
         api.getMine(m).then(sc => { LB.mine[m] = Math.max(LB.mine[m], sc); }).catch(()=>{});
       }
       lbRender();
-    }).catch(err => { console.warn('Pop10 leaderboard:', err); LB.status = 'offline'; lbRender(); });
+    }).catch(err => { console.warn('Pop10 leaderboard:', err); LB.err = err && (err.code || err.message); LB.status = 'offline'; lbRender(); });
   };
   if (window.PopLB) go(window.PopLB);
   else window.addEventListener('poplb-ready', () => go(window.PopLB), {once:true});
@@ -747,7 +749,7 @@ function lbRender(){
   if (LB.status === 'offline' && !rows.length){
     for (const id of ['lbMenuList','lbOverList']){
       const ol = document.getElementById(id); ol.replaceChildren();
-      const li = document.createElement('li'); li.className='empty'; li.textContent='Sin conexión: la tabla vuelve cuando haya internet.'; ol.append(li);
+      const li = document.createElement('li'); li.className='empty'; li.textContent = LB.err ? 'Error: ' + LB.err : 'Sin conexión: la tabla vuelve cuando haya internet.'; ol.append(li);
     }
   } else {
     lbFill(document.getElementById('lbMenuList'), rows, myIdx);
