@@ -9,5 +9,5 @@ export const firebaseConfig = {
   storageBucket: "quiniela-mundial-401dd.firebasestorage.app",
   messagingSenderId: "1036666116455",
   appId: "1:1036666116455:web:948f43dcdfc90359d8b7c2",
-  measurementId: "G-0L84YRPBME"",
+  measurementId: "G-0L84YRPBME",
 };
