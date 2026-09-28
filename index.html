@@ -34,14 +34,16 @@
   --danger:#ff4a63; --gold:#ffc21a; --accent:#ff5c8a; --good:#2fd9a4;
 }
 *,*::before,*::after{box-sizing:inherit}
-html{height:100%;background:var(--bg)}
+:root{--tb:0px}
+@supports (height:100lvh) and (height:100dvh){ :root{--tb:calc(100lvh - 100dvh)} }
+html{height:100%;background:var(--bg2)}
 body{height:100%;margin:0;background:var(--bg);color:var(--fg);
   font-family:"Fredoka",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",sans-serif;
   overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
-#wrap{position:fixed;top:0;bottom:0;left:0;right:0;max-width:520px;margin:0 auto;overflow:hidden;background:linear-gradient(180deg,var(--bg) 0%,var(--bg2) 100%)}
+#wrap{position:fixed;top:0;left:0;right:0;height:100vh;height:100lvh;max-width:520px;margin:0 auto;overflow:hidden;background:linear-gradient(180deg,var(--bg) 0%,var(--bg2) 100%)}
 canvas{position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 #safeProbe{position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-.ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--scrim);padding:calc(20px + env(safe-area-inset-top,0px)) 20px calc(20px + env(safe-area-inset-bottom,0px));overflow-y:auto}
+.ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--scrim);padding:calc(20px + env(safe-area-inset-top,0px)) 20px calc(20px + env(safe-area-inset-bottom,0px) + var(--tb));overflow-y:auto}
 .ov[hidden]{display:none}
 .card{background:var(--panel);border-radius:28px;padding:26px 22px 20px;width:100%;max-width:340px;text-align:center;
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 20px 50px rgba(0,0,0,.25)}
@@ -81,10 +83,10 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
 .lb li.empty{grid-template-columns:1fr;color:var(--muted);text-align:center}
 .lbHint{margin:8px 0 0;font-size:14px;color:var(--gold);text-align:center;font-weight:600}
 .lbHint:empty{display:none}
-#mute{position:absolute;left:12px;bottom:calc(10px + env(safe-area-inset-bottom,0px));width:44px;height:44px;border-radius:50%;border:2px solid var(--muted);
+#mute{position:absolute;left:12px;bottom:calc(10px + env(safe-area-inset-bottom,0px) + var(--tb));width:44px;height:44px;border-radius:50%;border:2px solid var(--muted);
   background:var(--panel);color:var(--fg);font:inherit;font-size:20px;line-height:1;cursor:pointer;display:grid;place-items:center}
 #mute.off{opacity:.5;text-decoration:line-through}
-.ver{position:absolute;right:10px;bottom:calc(6px + env(safe-area-inset-bottom,0px));font-size:11px;color:var(--muted);opacity:.7;pointer-events:none}
+.ver{position:absolute;right:10px;bottom:calc(6px + env(safe-area-inset-bottom,0px) + var(--tb));font-size:11px;color:var(--muted);opacity:.7;pointer-events:none}
 </style>
 </head>
 <body>
@@ -131,7 +133,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   </div>
 
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.5</div>
+  <div class="ver">v0.6</div>
 </div>
 
 <script>
