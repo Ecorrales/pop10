@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Puntaje plausible según la mecánica del juego:
+    //  - cada 10 da 100 × racha, y la racha nunca es mayor que el número de dieces;
+    //  - cada fusión que da 10 da 50;
+    //  - no se pueden hacer más de 2 dieces ni más de 1 fusión-10 por segundo.
+    function isValidScore(uid, mode) {
+      let d = request.resource.data;
+      return request.auth != null
+        && request.auth.uid == uid
+        && mode in ['tiempo', 'escape']
+        && d.keys().hasOnly(['name', 'score', 'tens', 'bonus10', 'duration', 'updatedAt'])
+        && d.keys().hasAll(['name', 'score', 'tens', 'bonus10', 'duration', 'updatedAt'])
+        && d.name is string && d.name.size() >= 1 && d.name.size() <= 16
+        && d.score is int && d.score > 0 && d.score <= 1000000
+        && d.tens is int && d.tens >= 0
+        && d.bonus10 is int && d.bonus10 >= 0
+        && d.duration is int && d.duration >= 1 && d.duration <= 3600
+        && d.tens <= d.duration * 2
+        && d.bonus10 <= d.duration
+        && d.score <= 50 * d.tens * (d.tens + 1) + 50 * d.bonus10
+        && d.updatedAt == request.time;
+    }
+
+    match /leaderboards/{mode}/scores/{uid} {
+      allow read: if mode in ['tiempo', 'escape'];
+      allow create: if isValidScore(uid, mode);
+      // Solo puede subir (nunca bajar) y máximo una escritura cada 5 segundos.
+      allow update: if isValidScore(uid, mode)
+        && request.resource.data.score >= resource.data.score
+        && request.time > resource.data.updatedAt + duration.value(5, 's');
+      allow delete: if false;
+    }
+  }
+}
