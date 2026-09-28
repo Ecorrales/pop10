@@ -20,8 +20,6 @@
   --panel:rgba(240,251,251,.92); --scrim:rgba(14,43,54,.35);
   --danger:#e8334f; --gold:#f2a900; --accent:#ff4f7e; --good:#12a37a;
   box-sizing:border-box;
-  padding-top:env(safe-area-inset-top,0px);
-  padding-bottom:env(safe-area-inset-bottom,0px);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -36,13 +34,14 @@
   --danger:#ff4a63; --gold:#ffc21a; --accent:#ff5c8a; --good:#2fd9a4;
 }
 *,*::before,*::after{box-sizing:inherit}
-html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+html{height:100%;background:var(--bg)}
 body{height:100%;margin:0;background:var(--bg);color:var(--fg);
   font-family:"Fredoka",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",sans-serif;
   overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
-#wrap{position:relative;height:100%;max-width:520px;margin:0 auto;background:linear-gradient(180deg,var(--bg) 0%,var(--bg2) 100%)}
-canvas{display:block;width:100%;height:100%}
-.ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--scrim);padding:20px}
+#wrap{position:fixed;top:0;bottom:0;left:0;right:0;max-width:520px;margin:0 auto;overflow:hidden;background:linear-gradient(180deg,var(--bg) 0%,var(--bg2) 100%)}
+canvas{position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+#safeProbe{position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+.ov{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--scrim);padding:calc(20px + env(safe-area-inset-top,0px)) 20px calc(20px + env(safe-area-inset-bottom,0px));overflow-y:auto}
 .ov[hidden]{display:none}
 .card{background:var(--panel);border-radius:28px;padding:26px 22px 20px;width:100%;max-width:340px;text-align:center;
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 20px 50px rgba(0,0,0,.25)}
@@ -82,15 +81,16 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
 .lb li.empty{grid-template-columns:1fr;color:var(--muted);text-align:center}
 .lbHint{margin:8px 0 0;font-size:14px;color:var(--gold);text-align:center;font-weight:600}
 .lbHint:empty{display:none}
-#mute{position:absolute;left:12px;bottom:10px;width:44px;height:44px;border-radius:50%;border:2px solid var(--muted);
+#mute{position:absolute;left:12px;bottom:calc(10px + env(safe-area-inset-bottom,0px));width:44px;height:44px;border-radius:50%;border:2px solid var(--muted);
   background:var(--panel);color:var(--fg);font:inherit;font-size:20px;line-height:1;cursor:pointer;display:grid;place-items:center}
 #mute.off{opacity:.5;text-decoration:line-through}
-.ver{position:absolute;right:10px;bottom:6px;font-size:11px;color:var(--muted);opacity:.7;pointer-events:none}
+.ver{position:absolute;right:10px;bottom:calc(6px + env(safe-area-inset-bottom,0px));font-size:11px;color:var(--muted);opacity:.7;pointer-events:none}
 </style>
 </head>
 <body>
 <div id="wrap">
   <canvas id="c"></canvas>
+  <div id="safeProbe"></div>
 
   <div id="menu" class="ov">
     <div class="card">
@@ -131,7 +131,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   </div>
 
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.4</div>
+  <div class="ver">v0.5</div>
 </div>
 
 <script>
@@ -159,6 +159,8 @@ const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const FONT = '"Fredoka", ui-rounded, system-ui, sans-serif';
 let W=400, H=700, S=1, nid=1, mode='tiempo';
 let COL = {};
+const SAFE = {top:0, bottom:0};
+function readSafe(){ const cs = getComputedStyle(document.getElementById('safeProbe')); SAFE.top = parseFloat(cs.paddingTop)||0; SAFE.bottom = parseFloat(cs.paddingBottom)||0; }
 const best = {tiempo:0, escape:0};
 try { best.tiempo = +localStorage.getItem('pop10-best-tiempo')||0; best.escape = +localStorage.getItem('pop10-best-escape')||0; } catch(e){}
 
@@ -180,7 +182,8 @@ function resize(){
   cv.width = Math.round(r.width*d); cv.height = Math.round(r.height*d);
   ctx.setTransform(d,0,0,d,0,0);
   W = r.width; H = r.height; S = W/400;
-  if (st) st.bubbles.forEach(b => b.r = radiusFor(b.v));
+  readSafe();
+  if (st) st.bubbles.forEach(b => { b.r = radiusFor(b.v); b.x = Math.min(Math.max(b.x, b.r), W - b.r); });
 }
 
 // ---------------- audio / háptico ----------------
@@ -362,15 +365,15 @@ function unstablePenalty(b, visible){
   if (visible){ burst(b.x,b.y,COL.danger,30,260); st.shake = Math.max(st.shake, 8); }
   if (st.demo) return;
   tone(90,.28,'sawtooth',.15,.4); buzz(60);
-  if (mode==='tiempo'){ st.timer -= CFG.unstablePenaltyTime; floatText(W/2, 150*S, '−'+CFG.unstablePenaltyTime+' s', COL.danger, 20); }
-  else { st.pressure += 2; floatText(W/2, 150*S, '+2 escapes', COL.danger, 20); }
+  if (mode==='tiempo'){ st.timer -= CFG.unstablePenaltyTime; floatText(W/2, SAFE.top+150*S, '−'+CFG.unstablePenaltyTime+' s', COL.danger, 20); }
+  else { st.pressure += 2; floatText(W/2, SAFE.top+150*S, '+2 escapes', COL.danger, 20); }
 }
 
 function onEscape(b){
   if (b.v > 10){ unstablePenalty(b,false); return; }
   if (st.demo || mode!=='escape') return;
   st.pressure += 1; tone(130,.1,'square',.07,.8);
-  floatText(Math.max(40*S,Math.min(W-40*S,b.x)), 150*S, '+1', COL.danger, 18);
+  floatText(Math.max(40*S,Math.min(W-40*S,b.x)), SAFE.top+150*S, '+1', COL.danger, 18);
 }
 
 function update(dt){
@@ -469,7 +472,7 @@ function tap(b){
     const pts = 100*st.streak; st.score += pts;
     st.lastChain = {txt: st.chain.join(' + ') + ' = 10', pts, streak:st.streak, life:1.2};
     st.sum = 0; st.chain = []; st.tenFlash = 1;
-    burst(W/2, 62*S, COL.gold, 34, 260);
+    burst(W/2, SAFE.top+62*S, COL.gold, 34, 260);
     arp(); buzz(30);
     if (mode==='tiempo'){ if (st.timer/limit() < .6) calmCue(); st.timer = limit(); }
     else { if (st.pressure > 0) calmCue(); st.pressure = Math.max(0, st.pressure-1); }
@@ -546,9 +549,9 @@ function heatColor(sum){
 
 function drawHUD(){
   // velo superior para que el HUD se lea sobre las burbujas
-  const g = ctx.createLinearGradient(0,0,0,175*S);
+  const g = ctx.createLinearGradient(0,0,0,SAFE.top+175*S);
   g.addColorStop(0, hexA(COL.bg,.95)); g.addColorStop(.75, hexA(COL.bg,.75)); g.addColorStop(1, hexA(COL.bg,0));
-  ctx.fillStyle = g; ctx.fillRect(0,0,W,175*S);
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,SAFE.top+175*S);
 
   if (!st.demo && mode==='escape' && st.pressure > 0){
     const a = Math.min(1, st.pressure/CFG.escapeMax);
@@ -557,6 +560,7 @@ function drawHUD(){
     ctx.fillStyle = rg; ctx.fillRect(0,0,W,40*S);
   }
   if (st.demo) return;
+  ctx.save(); ctx.translate(0, SAFE.top);
 
   const cx = W/2, cy = 64*S, R = 44*S;
   const shown = st.endSum ?? st.sum;
@@ -606,6 +610,7 @@ function drawHUD(){
     const n = CFG.escapeMax, gap = 8*S, pw = (w - gap*(n-1))/n;
     for (let i=0;i<n;i++){ ctx.fillStyle = i < st.pressure ? COL.danger : hexA(COL.muted,.25); roundRect(x0+i*(pw+gap), y, pw, 7*S, 4*S); ctx.fill(); }
   }
+  ctx.restore();
 }
 function roundRect(x,y,w,h,r){ ctx.beginPath(); if (w<=0) return; r=Math.min(r,w/2,h/2);
   ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
@@ -639,7 +644,7 @@ function render(){
   }
   ctx.globalAlpha = 1;
   for (const f of st.flyers){ if (f.t >= 1) continue;
-    const e = f.t*f.t, x = lerp(f.x0, W/2, e), y = lerp(f.y0, 64*S, e) - Math.sin(f.t*Math.PI)*30*S;
+    const e = f.t*f.t, x = lerp(f.x0, W/2, e), y = lerp(f.y0, SAFE.top+64*S, e) - Math.sin(f.t*Math.PI)*30*S;
     ctx.fillStyle = f.c; ctx.font = `700 ${Math.round((22 - 6*f.t)*S)}px ${FONT}`; ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillText('+'+f.v, x, y);
   }
@@ -758,11 +763,24 @@ cv.addEventListener('pointerdown', e => {
   e.preventDefault();
   if (!st || st.demo || !st.alive) return;
   ensureAudio();
-  const r = cv.getBoundingClientRect(), x = e.clientX-r.left, y = e.clientY-r.top;
-  let hit=null, bd=1e9;
-  for (const b of st.bubbles){ const d = Math.hypot(b.x-x, b.y-y); if (d < b.r*1.12 + 6*S && d < bd){ bd=d; hit=b; } }
+  const r = cv.getBoundingClientRect();
+  if (Math.abs(r.width - W) > 1 || Math.abs(r.height - H) > 1) resize(); // por si el viewport cambió sin avisar
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  // compensa lo que se movieron las burbujas desde que el dedo tocó la pantalla
+  const ts = e.timeStamp > 1e12 ? 0 : (performance.now() - e.timeStamp)/1000;
+  const lag = Math.min(.08, Math.max(0, ts));
+  let hit = null, bestK = Infinity;
+  for (const b of st.bubbles){
+    const d = Math.hypot(b.x - b.vx*lag - x, b.y - b.vy*lag - y);
+    if (d > b.r + 16*S) continue;          // margen generoso para dedos
+    const k = d / b.r;                      // si hay dos cerca, gana la que tocaste más al centro
+    if (k < bestK){ bestK = k; hit = b; }
+  }
   if (hit) tap(hit);
-});
+}, {passive:false});
+// evita zoom, scroll y menús de iOS sobre el área de juego
+for (const ev of ['touchstart','touchmove','touchend','gesturestart','dblclick','contextmenu'])
+  cv.addEventListener(ev, e => e.preventDefault(), {passive:false});
 
 document.querySelectorAll('.modes .mode').forEach(btn => btn.addEventListener('click', () => {
   mode = btn.dataset.mode;
@@ -786,6 +804,9 @@ muteBtn.addEventListener('click', () => {
 });
 
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 150));
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(cv);
 resize(); demo();
 requestAnimationFrame(frame);
 lbInit();

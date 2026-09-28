@@ -1,6 +1,6 @@
 // Service worker de Pop10: el juego abre sin internet; la tabla necesita conexión.
 // Sube VERSION cada vez que publiques cambios para que los jugadores reciban la nueva versión.
-const VERSION = 'pop10-v4';
+const VERSION = 'pop10-v5';
 const SHELL = [
   './', 'index.html', 'leaderboard.js', 'firebase-config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
