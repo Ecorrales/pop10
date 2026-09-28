@@ -133,7 +133,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   </div>
 
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.8</div>
+  <div class="ver">v0.9</div>
 </div>
 
 <script>
@@ -178,7 +178,20 @@ function hexA(h,a){ h=h.replace('#',''); if(h.length===3) h=h.split('').map(c=>c
 const lerp=(a,b,t)=>a+(b-a)*t;
 const radiusFor = v => (20 + Math.min(v,18)*1.7) * S;
 
+// iOS instalado reporta mal la altura del viewport y deja una franja muerta abajo:
+// ahí usamos la altura física de la pantalla.
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function fitIOS(){
+  const wrap = document.getElementById('wrap');
+  const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  if (!IS_IOS || !standalone){ wrap.style.height = ''; return; }
+  const portrait = matchMedia('(orientation: portrait)').matches;
+  const h = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+  const px = Math.max(h, window.innerHeight) + 'px';
+  if (wrap.style.height !== px) wrap.style.height = px;
+}
 function resize(){
+  fitIOS();
   const r = cv.getBoundingClientRect();
   const d = Math.min(window.devicePixelRatio||1, 2.5);
   cv.width = Math.round(r.width*d); cv.height = Math.round(r.height*d);
