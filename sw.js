@@ -1,11 +1,13 @@
-// Service worker de Pop10: el juego abre sin internet; la tabla necesita conexión.
-// Sube VERSION cada vez que publiques cambios para que los jugadores reciban la nueva versión.
-const VERSION = 'pop10-v5';
+// Service worker de Pop10.
+// - La página (index.html) se pide primero a internet: si publicas cambios, llegan al abrir el juego.
+// - El resto (scripts, íconos, SDK de Firebase, fuentes) sale de caché y se actualiza en segundo plano.
+// - Sin internet, todo sale de caché y el juego abre igual.
+// Sube VERSION cuando publiques cambios en archivos que no sean index.html.
+const VERSION = 'pop10-v10';
 const SHELL = [
   './', 'index.html', 'leaderboard.js', 'firebase-config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
-// Recursos externos que sí conviene guardar: el SDK de Firebase y las fuentes.
 const RUNTIME_HOSTS = ['www.gstatic.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', e => {
@@ -27,7 +29,20 @@ self.addEventListener('fetch', e => {
   const sameOrigin = url.origin === self.location.origin;
   if (!sameOrigin && !RUNTIME_HOSTS.includes(url.hostname)) return; // Firestore/Auth van directo a la red
 
-  // Primero caché, y en segundo plano se actualiza (stale-while-revalidate).
+  // Página principal: primero red (sin caché del navegador), si falla, la copia guardada.
+  if (req.mode === 'navigate' || (sameOrigin && url.pathname.endsWith('/index.html'))) {
+    e.respondWith(
+      fetch(req, { cache: 'no-store' })
+        .then(res => {
+          if (res && res.ok){ const copy = res.clone(); caches.open(VERSION).then(c => c.put('index.html', copy)); }
+          return res;
+        })
+        .catch(() => caches.match('index.html'))
+    );
+    return;
+  }
+
+  // Todo lo demás: caché primero y se actualiza en segundo plano.
   e.respondWith(
     caches.open(VERSION).then(async cache => {
       const cached = await cache.match(req, { ignoreSearch: sameOrigin });
