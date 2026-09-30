@@ -3,7 +3,7 @@
 // - El resto (scripts, íconos, SDK de Firebase, fuentes) sale de caché y se actualiza en segundo plano.
 // - Sin internet, todo sale de caché y el juego abre igual.
 // Sube VERSION cuando publiques cambios en archivos que no sean index.html.
-const VERSION = 'pop10-v11';
+const VERSION = 'pop10-v12';
 const SHELL = [
   './', 'index.html', 'leaderboard.js', 'firebase-config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
@@ -30,7 +30,8 @@ self.addEventListener('fetch', e => {
   if (!sameOrigin && !RUNTIME_HOSTS.includes(url.hostname)) return; // Firestore/Auth van directo a la red
 
   // Página principal: primero red (sin caché del navegador), si falla, la copia guardada.
-  if (req.mode === 'navigate' || (sameOrigin && url.pathname.endsWith('/index.html'))) {
+  const isPage = sameOrigin && (url.pathname.endsWith('/') || url.pathname.endsWith('/index.html'));
+  if (isPage) {
     e.respondWith(
       fetch(req, { cache: 'no-store' })
         .then(res => {
