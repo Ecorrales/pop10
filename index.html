@@ -61,6 +61,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
 .tip{margin:16px 0 0;font-size:13.5px;color:var(--muted);line-height:1.4}
 .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:4px 0 18px}
 .stats div{font-size:13px;color:var(--muted)}
+.stats em{font-style:normal}
 .stats span{display:block;font-size:26px;font-weight:700;color:var(--fg)}
 .reason{font-size:28px;font-weight:700;margin:0 0 4px}
 .detail{margin:0 0 14px;color:var(--muted);font-size:16px}
@@ -100,7 +101,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
       <p class="sub">Revienta burbujas para sumar exactamente 10. Si te pasas, pierdes.</p>
       <div class="modes" role="radiogroup" aria-label="Modo de presión">
         <button class="mode on" data-mode="tiempo" role="radio" aria-checked="true"><strong>Tiempo</strong><small>Llega a 10 antes de que se acabe el reloj</small></button>
-        <button class="mode" data-mode="escape" role="radio" aria-checked="false"><strong>Escape</strong><small>No dejes que se escapen por arriba</small></button>
+        <button class="mode" data-mode="reloj" role="radio" aria-checked="false"><strong>Contra reloj</strong><small>90 segundos: haz todos los 10 que puedas</small></button>
       </div>
       <label class="nick"><span>Tu nombre en la tabla</span><input id="nick" maxlength="16" autocomplete="nickname" enterkeyhint="done" placeholder="Burbuja"></label>
       <div class="lb" id="lbMenu" hidden>
@@ -117,8 +118,8 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
       <p class="reason" id="reason">¡Te pasaste!</p>
       <p class="detail" id="detail"></p>
       <div class="stats">
-        <div><span id="sScore">0</span>puntos</div>
-        <div><span id="sTens">0</span>dieces</div>
+        <div><span id="sScore">0</span><em id="lScore">puntos</em></div>
+        <div><span id="sTens">0</span><em id="lTens">dieces</em></div>
         <div><span id="sBest">0</span>récord</div>
       </div>
       <p class="new" id="newBest" hidden>Nuevo récord</p>
@@ -133,7 +134,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   </div>
 
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.9</div>
+  <div class="ver">v0.12</div>
 </div>
 
 <script>
@@ -151,6 +152,12 @@ const CFG = {
   riseStart: 55, riseMax: 132,       // velocidad de subida (px/s en una pantalla de 800 px de alto)
   rampSeconds: 90,         // tiempo hasta dificultad máxima
   streakWindow: 5,         // segundos entre dieces para mantener la racha
+  // Contra reloj
+  relojDuration: 90,       // duración de la partida
+  relojFrenzy: 30,         // últimos segundos en frenesí: más burbujas y cada 10 vale doble
+  relojLock: 1.5,          // segundos bloqueado después de pasarte de 10
+  relojUnstablePenalty: 2, // segundos que resta una inestable al explotar
+  relojBonusEvery: 5,      // cada tantos dieces seguidos sin error, un 10 de regalo
 };
 const PAL = [null,'#19b6e6','#19c77f','#7cc414','#e0ad00','#ff8a1f','#ff5a2b','#f0327a','#a63df0','#6a4cff'];
 const WEIGHTS = [0,15,15,14,13,12,10,8,7,6]; // probabilidad relativa de cada valor 1–9
@@ -163,8 +170,8 @@ let W=400, H=700, S=1, nid=1, mode='tiempo';
 let COL = {};
 const SAFE = {top:0, bottom:0};
 function readSafe(){ const cs = getComputedStyle(document.getElementById('safeProbe')); SAFE.top = parseFloat(cs.paddingTop)||0; SAFE.bottom = parseFloat(cs.paddingBottom)||0; }
-const best = {tiempo:0, escape:0};
-try { best.tiempo = +localStorage.getItem('pop10-best-tiempo')||0; best.escape = +localStorage.getItem('pop10-best-escape')||0; } catch(e){}
+const best = {tiempo:0, reloj:0};
+try { best.tiempo = +localStorage.getItem('pop10-best-tiempo')||0; best.reloj = +localStorage.getItem('pop10-best-reloj')||0; } catch(e){}
 
 function readColors(){
   const cs = getComputedStyle(document.documentElement);
@@ -302,6 +309,10 @@ function calmCue(){
 function urgency(){
   if (!st || st.demo || !st.alive) return 0;
   if (mode === 'tiempo') return Math.max(0, Math.min(1, 1 - st.timer/limit()));
+  if (mode === 'reloj'){
+    const c = Math.max(0, st.clock), F = CFG.relojFrenzy;
+    return c > F ? .55*(1 - (c-F)/(CFG.relojDuration-F)) : .6 + .4*(1 - c/F);
+  }
   return Math.min(1, st.pressure/CFG.escapeMax);
 }
 function musicTick(dt){
@@ -315,12 +326,16 @@ function musicTick(dt){
 
 // ---------------- estado ----------------
 let st = null;
+// Analytics: si Firebase no cargó, no pasa nada.
+function track(name, params){ try { window.PopLB && window.PopLB.track && window.PopLB.track(name, params); } catch(e){} }
+
 function newState(demo){
   return {demo, bubbles:[], newb:[], parts:[], texts:[], contacts:new Map(),
     sum:0, chain:[], lastChain:null, score:0, tens:0, bonus10:0, streak:0, lastTen:-99,
     t:0, spawnT:.2, timer:CFG.timeLimit, pressure:0, alive:true, deadT:0,
     shake:0, flash:0, tenFlash:0, endSum:null,
-    pops:[], flyers:[], hitstop:0, sumPulse:0};
+    pops:[], flyers:[], hitstop:0, sumPulse:0,
+    clock:CFG.relojDuration, lock:0, errors:0, combo:0, frenzy:false, errSum:0};
 }
 const diff = () => Math.min(1, st.t/CFG.rampSeconds);
 const limit = () => lerp(CFG.timeLimit, CFG.timeLimitMin, diff());
@@ -361,7 +376,9 @@ function fuse(a,b){
     burst(x,y,COL.gold,26,220); floatText(x,y,'¡fusión 10!',COL.gold,22);
     if(!st.demo){
       st.score += 50; st.bonus10++; floatText(x,y+26*S,'+50',COL.gold,18); arp(660); buzz(25);
-      if(mode==='tiempo') st.timer = Math.min(st.timer+1.5, limit()); else st.pressure = Math.max(0, st.pressure-1);
+      if(mode==='tiempo') st.timer = Math.min(st.timer+1.5, limit());
+      else if(mode==='reloj'){ st.tens++; floatText(x,y+48*S,'+1 diez',COL.gold,18); }
+      else st.pressure = Math.max(0, st.pressure-1);
     }
     return;
   }
@@ -381,6 +398,7 @@ function unstablePenalty(b, visible){
   if (st.demo) return;
   tone(90,.28,'sawtooth',.15,.4); buzz(60);
   if (mode==='tiempo'){ st.timer -= CFG.unstablePenaltyTime; floatText(W/2, SAFE.top+150*S, '−'+CFG.unstablePenaltyTime+' s', COL.danger, 20); }
+  else if (mode==='reloj'){ st.clock -= CFG.relojUnstablePenalty; floatText(W/2, SAFE.top+150*S, '−'+CFG.relojUnstablePenalty+' s', COL.danger, 20); }
   else { st.pressure += 2; floatText(W/2, SAFE.top+150*S, '+2 escapes', COL.danger, 20); }
 }
 
@@ -394,7 +412,7 @@ function onEscape(b){
 function update(dt){
   st.t += dt;
   st.spawnT -= dt;
-  if (st.spawnT <= 0){ spawn(); st.spawnT = lerp(CFG.spawnStart, CFG.spawnMin, diff()) * (.75 + Math.random()*.5); }
+  if (st.spawnT <= 0){ spawn(); st.spawnT = lerp(CFG.spawnStart, CFG.spawnMin, diff()) * (.75 + Math.random()*.5) * (st.frenzy ? .6 : 1); }
 
   const bs = st.bubbles;
   for (const b of bs){
@@ -439,6 +457,18 @@ function update(dt){
 
   if (!st.demo && st.alive){
     if (mode==='tiempo'){ st.timer -= dt; if (st.timer <= 0){ st.timer=0; gameOver('Se acabó el tiempo', `Te quedaste en ${st.sum} de 10`); } }
+    else if (mode==='reloj'){
+      st.clock -= dt; st.lock = Math.max(0, st.lock - dt);
+      if (!st.frenzy && st.clock <= CFG.relojFrenzy){
+        st.frenzy = true; floatText(W/2, H*.45, '¡FRENESÍ!', COL.gold, 40);
+        floatText(W/2, H*.45 + 40*S, 'cada 10 vale doble', COL.gold, 18); arp(784); buzz([30,30,30]);
+      }
+      if (st.clock <= 0){
+        st.clock = 0;
+        const e = st.errors;
+        gameOver('¡Tiempo!', `Hiciste ${st.tens} dieces` + (e ? ` con ${e} error${e>1?'es':''}` : ' sin errores'));
+      }
+    }
     else if (st.pressure >= CFG.escapeMax) gameOver('Se escaparon demasiadas', `${CFG.escapeMax} burbujas salieron por arriba`);
   }
 }
@@ -459,7 +489,18 @@ function updateFx(dt){
   if (st.lastChain){ st.lastChain.life -= dt; if (st.lastChain.life<=0) st.lastChain=null; }
 }
 
+function relojError(){
+  st.errors++;
+  const lost = st.tens > 0 ? 1 : 0;
+  st.tens -= lost; st.combo = 0; st.streak = 0;
+  st.errSum = st.sum; st.sum = 0; st.chain = [];
+  st.lock = CFG.relojLock; st.shake = 8; st.flash = .45;
+  tone(110,.3,'square',.18,.5); buzz([60,30,60]);
+  floatText(W/2, SAFE.top+150*S, lost ? '−1 diez' : '¡fallo!', COL.danger, 22);
+}
+
 function tap(b){
+  if (mode==='reloj' && st.lock > 0){ tone(170,.05,'square',.05); return; }
   b.dead = true;
   st.bubbles = st.bubbles.filter(x=>x!==b);
   st.sum += b.v; st.chain.push(b.v);
@@ -477,6 +518,7 @@ function tap(b){
   st.hitstop = .045;
   popSfx(Math.min(st.sum,10)); buzz(14);
   if (st.sum > 10){
+    if (mode==='reloj'){ relojError(); return; }
     st.endSum = st.sum;
     gameOver('¡Te pasaste!', `${st.chain.join(' + ')} = ${st.sum}`);
     return;
@@ -486,29 +528,43 @@ function tap(b){
     st.lastTen = st.t; st.tens++;
     const pts = 100*st.streak; st.score += pts;
     st.lastChain = {txt: st.chain.join(' + ') + ' = 10', pts, streak:st.streak, life:1.2};
+    if (mode==='reloj'){
+      let gain = 1;
+      if (st.frenzy){ st.tens++; gain++; }
+      st.combo++;
+      if (st.combo % CFG.relojBonusEvery === 0){ st.tens++; gain++; floatText(W/2, SAFE.top+150*S, `¡${st.combo} seguidos! +1`, COL.gold, 20); }
+      st.lastChain.label = `+${gain} ${gain>1?'dieces':'diez'}` + (st.frenzy ? ' (frenesí)' : '');
+    }
     st.sum = 0; st.chain = []; st.tenFlash = 1;
     burst(W/2, SAFE.top+62*S, COL.gold, 34, 260);
     arp(); buzz(30);
     if (mode==='tiempo'){ if (st.timer/limit() < .6) calmCue(); st.timer = limit(); }
-    else { if (st.pressure > 0) calmCue(); st.pressure = Math.max(0, st.pressure-1); }
+    else if (mode!=='reloj'){ if (st.pressure > 0) calmCue(); st.pressure = Math.max(0, st.pressure-1); }
   }
 }
 
 function gameOver(reason, detail){
   if (!st.alive) return;
+  const why = reason.startsWith('¡Te pasaste') ? 'pasarse' : reason.startsWith('Se acabó') ? 'tiempo' : reason.startsWith('¡Tiempo') ? 'fin' : 'escapes';
+  const result = mode==='reloj' ? st.tens : st.score;
   st.alive = false; st.deadT = 0; st.shake = 14; st.flash = 1;
   musicStop();
   tone(110,.42,'square',.22,.45); buzz([90,40,180]);
   let isNew = false;
-  if (st.score > best[mode]){ best[mode] = st.score; isNew = st.score > 0;
+  if (result > best[mode]){ best[mode] = result; isNew = result > 0;
     try{ localStorage.setItem('pop10-best-'+mode, best[mode]); }catch(e){} }
+  track('game_end', {mode, reason:why, score:st.score, tens:st.tens, bonus10:st.bonus10,
+    duration:Math.floor(st.t), errors:st.errors, new_best: isNew ? 1 : 0});
   lbSubmit(mode);
   setTimeout(()=>{
     lbRender();
     document.getElementById('reason').textContent = reason;
     document.getElementById('detail').textContent = detail;
-    document.getElementById('sScore').textContent = st.score;
-    document.getElementById('sTens').textContent = st.tens;
+    const R = mode==='reloj';
+    document.getElementById('lScore').textContent = R ? 'dieces' : 'puntos';
+    document.getElementById('lTens').textContent = R ? 'errores' : 'dieces';
+    document.getElementById('sScore').textContent = R ? st.tens : st.score;
+    document.getElementById('sTens').textContent = R ? st.errors : st.tens;
     document.getElementById('sBest').textContent = best[mode];
     document.getElementById('newBest').hidden = !isNew;
     document.getElementById('over').hidden = false;
@@ -521,6 +577,7 @@ function start(){
   st = newState(false);
   for (let i=0;i<4;i++) spawn(H*(.55 + i*.11));
   musicStart();
+  track('game_start', {mode});
   document.getElementById('menu').hidden = true;
   document.getElementById('over').hidden = true;
 }
@@ -578,24 +635,27 @@ function drawHUD(){
   ctx.save(); ctx.translate(0, SAFE.top);
 
   const cx = W/2, cy = 64*S, R = 44*S;
-  const shown = st.endSum ?? st.sum;
-  const col = st.endSum ? COL.danger : (st.tenFlash>0 ? COL.gold : heatColor(shown));
+  const locked = mode==='reloj' && st.lock > 0;
+  const shown = st.endSum ?? (locked ? st.errSum : st.sum);
+  const col = (st.endSum || locked) ? COL.danger : (st.tenFlash>0 ? COL.gold : heatColor(shown));
   ctx.lineCap = 'round';
   ctx.beginPath(); ctx.arc(cx,cy,R,0,TAU); ctx.strokeStyle = hexA(COL.muted,.28); ctx.lineWidth = 9*S; ctx.stroke();
   const frac = st.tenFlash>0 ? 1 : Math.min(1, shown/10);
   if (frac > 0){ ctx.beginPath(); ctx.arc(cx,cy,R,-Math.PI/2,-Math.PI/2+TAU*frac); ctx.strokeStyle = col; ctx.lineWidth = (9+5*st.sumPulse)*S; ctx.stroke(); }
   if (st.tenFlash > 0){ ctx.beginPath(); ctx.arc(cx,cy,R*(1+ .5*(1-st.tenFlash)),0,TAU); ctx.strokeStyle = hexA(COL.gold, st.tenFlash); ctx.lineWidth = 4*S; ctx.stroke(); }
   ctx.lineCap = 'butt';
-  ctx.fillStyle = st.endSum ? COL.danger : COL.fg;
+  ctx.fillStyle = (st.endSum || locked) ? COL.danger : COL.fg;
   ctx.font = `700 ${Math.round(46*S*(1+.2*st.tenFlash+.18*st.sumPulse))}px ${FONT}`;
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillText(st.tenFlash>0 ? '10' : shown, cx, cy+2*S);
 
   // cadena o resultado del último 10
   ctx.font = `600 ${Math.round(16*S)}px ${FONT}`;
-  if (st.lastChain){
+  if (locked){
+    ctx.fillStyle = COL.danger; ctx.fillText(`te pasaste: bloqueado ${st.lock.toFixed(1)} s`, cx, 128*S);
+  } else if (st.lastChain){
     ctx.fillStyle = hexA(COL.gold, Math.min(1, st.lastChain.life*1.5));
-    const s = st.lastChain.streak>1 ? `  +${st.lastChain.pts} (racha ×${st.lastChain.streak})` : `  +${st.lastChain.pts}`;
+    const s = st.lastChain.label ? '  ' + st.lastChain.label : st.lastChain.streak>1 ? `  +${st.lastChain.pts} (racha ×${st.lastChain.streak})` : `  +${st.lastChain.pts}`;
     ctx.fillText(st.lastChain.txt + s, cx, 128*S);
   } else if (st.chain.length && !st.endSum){
     ctx.fillStyle = COL.muted;
@@ -606,14 +666,22 @@ function drawHUD(){
 
   // puntos y récord
   ctx.textAlign='left'; ctx.fillStyle = COL.muted; ctx.font = `500 ${Math.round(13*S)}px ${FONT}`;
-  ctx.fillText('puntos', 16*S, 30*S);
+  const RJ = mode==='reloj';
+  ctx.fillText(RJ ? 'dieces' : 'puntos', 16*S, 30*S);
   ctx.fillStyle = COL.fg; ctx.font = `700 ${Math.round(26*S)}px ${FONT}`;
-  ctx.fillText(st.score, 16*S, 54*S);
+  ctx.fillText(RJ ? st.tens : st.score, 16*S, 54*S);
   ctx.textAlign='right'; ctx.fillStyle = COL.muted; ctx.font = `500 ${Math.round(13*S)}px ${FONT}`;
   const streakOn = st.streak>1 && st.t - st.lastTen <= CFG.streakWindow;
-  ctx.fillText(streakOn ? 'racha' : 'récord', W-16*S, 30*S);
-  ctx.fillStyle = streakOn ? COL.gold : COL.fg; ctx.font = `700 ${Math.round(26*S)}px ${FONT}`;
-  ctx.fillText(streakOn ? '×'+st.streak : best[mode], W-16*S, 54*S);
+  if (RJ){
+    const c = Math.max(0, Math.ceil(st.clock));
+    ctx.fillText(st.frenzy ? '¡frenesí!' : 'tiempo', W-16*S, 30*S);
+    ctx.fillStyle = st.frenzy ? COL.gold : COL.fg; ctx.font = `700 ${Math.round(26*S)}px ${FONT}`;
+    ctx.fillText(`${Math.floor(c/60)}:${String(c%60).padStart(2,'0')}`, W-16*S, 54*S);
+  } else {
+    ctx.fillText(streakOn ? 'racha' : 'récord', W-16*S, 30*S);
+    ctx.fillStyle = streakOn ? COL.gold : COL.fg; ctx.font = `700 ${Math.round(26*S)}px ${FONT}`;
+    ctx.fillText(streakOn ? '×'+st.streak : best[mode], W-16*S, 54*S);
+  }
 
   // presión
   const y = 148*S, x0 = 24*S, w = W-48*S;
@@ -621,6 +689,11 @@ function drawHUD(){
     const f = Math.max(0, st.timer/limit());
     ctx.fillStyle = hexA(COL.muted,.25); roundRect(x0,y,w,7*S,4*S); ctx.fill();
     ctx.fillStyle = f < .3 ? COL.danger : COL.good; roundRect(x0,y,w*f,7*S,4*S); ctx.fill();
+  } else if (RJ){
+    const f = Math.max(0, st.clock/CFG.relojDuration), fz = CFG.relojFrenzy/CFG.relojDuration;
+    ctx.fillStyle = hexA(COL.muted,.25); roundRect(x0,y,w,7*S,4*S); ctx.fill();
+    ctx.fillStyle = st.frenzy ? COL.gold : COL.good; roundRect(x0,y,w*f,7*S,4*S); ctx.fill();
+    ctx.fillStyle = hexA(COL.gold,.9); ctx.fillRect(x0 + w*fz - 1*S, y-3*S, 2*S, 13*S); // dónde empieza el frenesí
   } else {
     const n = CFG.escapeMax, gap = 8*S, pw = (w - gap*(n-1))/n;
     for (let i=0;i<n;i++){ ctx.fillStyle = i < st.pressure ? COL.danger : hexA(COL.muted,.25); roundRect(x0+i*(pw+gap), y, pw, 7*S, 4*S); ctx.fill(); }
@@ -684,8 +757,8 @@ function frame(now){
 }
 
 // ---------------- tabla global (Firebase, ver leaderboard.js) ----------------
-const LB = {api:null, uid:null, rows:{tiempo:[], escape:[]}, mine:{tiempo:0, escape:0}, status:'loading'};
-const MODE_NAME = {tiempo:'Tiempo', escape:'Escape'};
+const LB = {api:null, uid:null, rows:{tiempo:[], reloj:[]}, mine:{tiempo:0, reloj:0}, status:'loading'};
+const MODE_NAME = {tiempo:'Tiempo', reloj:'Contra reloj'};
 
 function cleanNick(v){ return String(v||'').replace(/[\u0000-\u001f\u007f<>]/g,'').replace(/\s+/g,' ').trim().slice(0,16); }
 const nickInput = document.getElementById('nick');
@@ -706,7 +779,7 @@ function lbInit(){
     LB.api = api;
     api.init().then(uid => {
       LB.uid = uid; LB.status = 'ok';
-      for (const m of ['tiempo','escape']){
+      for (const m of ['tiempo','reloj']){
         api.subscribe(m, rows => {
           LB.rows[m] = rows;
           const me = rows.find(r => r.id === LB.uid);
@@ -723,10 +796,12 @@ function lbInit(){
 }
 
 async function lbSubmit(m){
-  if (!LB.api || LB.status !== 'ok' || st.score <= 0 || st.score <= LB.mine[m]) return;
-  const prev = LB.mine[m]; LB.mine[m] = st.score;
+  // En Contra reloj se compite por dieces; en Tiempo, por puntos.
+  const value = m === 'reloj' ? st.tens : st.score;
+  if (!LB.api || LB.status !== 'ok' || value <= 0 || value <= LB.mine[m]) return;
+  const prev = LB.mine[m]; LB.mine[m] = value;
   try {
-    await LB.api.submit(m, {name:nick, score:st.score, tens:st.tens, bonus10:st.bonus10, duration:Math.max(1, Math.floor(st.t))});
+    await LB.api.submit(m, {name:nick, score:value, tens:st.tens, bonus10:st.bonus10, duration:Math.max(1, Math.floor(st.t))});
   } catch(e){
     console.warn('Pop10 submit:', e); LB.mine[m] = prev; LB.status = 'rejected'; lbRender();
   }
@@ -771,7 +846,7 @@ function lbRender(){
   let hint = '';
   if (LB.status === 'rejected') hint = 'No se pudo guardar tu puntaje en la tabla.';
   else if (myIdx === 0) hint = 'Vas en primer lugar.';
-  else if (myIdx > 0){ const above = rows[myIdx-1]; hint = `Te faltan ${above.score - rows[myIdx].score + 1} para pasar a ${above.name || 'Alguien'}.`; }
+  else if (myIdx > 0){ const above = rows[myIdx-1]; { const n = above.score - rows[myIdx].score + 1; hint = `Te faltan ${n} ${mode==='reloj' ? (n>1?'dieces':'diez') : ''} para pasar a ${above.name || 'Alguien'}.`.replace('  ',' '); } }
   else if (rows.length >= 20) hint = `Te faltan ${rows[rows.length-1].score - LB.mine[mode] + 1} para entrar al top 20.`;
   document.getElementById('lbHint').textContent = hint;
 }
@@ -803,6 +878,7 @@ document.querySelectorAll('.modes .mode').forEach(btn => btn.addEventListener('c
   mode = btn.dataset.mode;
   document.querySelectorAll('.modes .mode').forEach(b => { const on=b===btn; b.classList.toggle('on',on); b.setAttribute('aria-checked',on); });
   lbRender();
+  track('select_mode', {mode});
 }));
 document.getElementById('play').addEventListener('click', start);
 document.getElementById('again').addEventListener('click', start);
@@ -816,6 +892,7 @@ function syncMute(){ muteBtn.classList.toggle('off', !Music.on); muteBtn.setAttr
 syncMute();
 muteBtn.addEventListener('click', () => {
   Music.on = !Music.on; syncMute();
+  track('music_toggle', {on: Music.on ? 1 : 0});
   try { localStorage.setItem('pop10-music', Music.on?'on':'off'); } catch(e){}
   if (AC && Music.bus) Music.bus.gain.setTargetAtTime(Music.on && Music.playing ? .5 : 0, AC.currentTime, .1);
 });
