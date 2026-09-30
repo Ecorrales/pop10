@@ -3,7 +3,7 @@
 // - El resto (scripts, íconos, SDK de Firebase, fuentes) sale de caché y se actualiza en segundo plano.
 // - Sin internet, todo sale de caché y el juego abre igual.
 // Sube VERSION cuando publiques cambios en archivos que no sean index.html.
-const VERSION = 'pop10-v10';
+const VERSION = 'pop10-v11';
 const SHELL = [
   './', 'index.html', 'leaderboard.js', 'firebase-config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
