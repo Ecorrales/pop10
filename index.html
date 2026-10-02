@@ -143,7 +143,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   </div>
 
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.14</div>
+  <div class="ver">v0.15</div>
 </div>
 
 <script>
@@ -847,7 +847,7 @@ async function lbSubmit(m){
     if (value <= LB.mine[k]) continue;
     const prev = LB.mine[k]; LB.mine[k] = value;
     try { await LB.api.submit(m, p, entry); lbRank(m, p); }
-    catch(e){ console.warn('Pop10 submit:', e); LB.mine[k] = prev; LB.rejected = true; lbRender(); }
+    catch(e){ console.warn('Pop10 submit:', e); LB.mine[k] = prev; LB.rejected = (p === 'all' ? 'histórico' : 'semana') + ': ' + ((e && (e.code || e.message)) || 'error'); lbRender(); }
   }
 }
 
@@ -908,7 +908,7 @@ function lbRender(){
   const unit = n => mode === 'reloj' ? (n > 1 ? ' dieces' : ' diez') : '';
   const mine = LB.mine[k] || 0;
   let hint = '';
-  if (LB.rejected) hint = 'No se pudo guardar tu puntaje en la tabla.';
+  if (LB.rejected) hint = `No se pudo guardar tu puntaje (${LB.rejected}).`;
   else if (myIdx === 0) hint = LB.view==='week' ? 'Vas en primer lugar esta semana.' : 'Vas en primer lugar.';
   else if (myIdx > 0){ const above = rows[myIdx-1], n = above.score - rows[myIdx].score + 1; hint = `Te faltan ${n}${unit(n)} para pasar a ${above.name || 'Alguien'}.`; }
   else if (rows.length >= 20 && mine > 0){ const n = rows[rows.length-1].score - mine + 1; hint = `Te faltan ${n}${unit(n)} para entrar al top 20.`; }
