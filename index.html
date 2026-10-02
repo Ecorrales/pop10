@@ -89,6 +89,19 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
 .lb li.empty{grid-template-columns:1fr;color:var(--muted);text-align:center}
 .lbHint{margin:8px 0 0;font-size:14px;color:var(--gold);text-align:center;font-weight:600}
 .lbHint:empty{display:none}
+#tut{position:absolute;left:16px;right:16px;top:calc(env(safe-area-inset-top,0px) + 170px);max-width:420px;margin:0 auto;
+  background:var(--panel);border-radius:22px;padding:14px 16px 12px;text-align:center;pointer-events:none;
+  box-shadow:0 12px 30px rgba(0,0,0,.2);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+#tut[hidden]{display:none}
+#tut .tutStep{font-size:12px;color:var(--muted);margin:0 0 4px}
+#tut .tutMsg{font-size:17px;font-weight:600;line-height:1.35;margin:0}
+#tut .tutMsg.bad{color:var(--danger)}
+#tut .tutBtns{display:flex;gap:8px;justify-content:center;margin-top:10px}
+#tut button{pointer-events:auto;font:inherit;font-size:15px;font-weight:600;border-radius:999px;padding:8px 16px;cursor:pointer}
+#tutNext{background:var(--accent);color:#fff;border:0}
+#tutNext[hidden]{display:none}
+#tutSkip{background:transparent;color:var(--muted);border:2px solid var(--muted)}
+.howto{display:block;margin:12px auto 0;font:inherit;font-size:15px;color:var(--muted);background:none;border:0;text-decoration:underline;cursor:pointer}
 #mute{position:absolute;left:12px;bottom:calc(10px + env(safe-area-inset-bottom,0px) + var(--tb));width:44px;height:44px;border-radius:50%;border:2px solid var(--muted);
   background:var(--panel);color:var(--fg);font:inherit;font-size:20px;line-height:1;cursor:pointer;display:grid;place-items:center}
 #mute.off{opacity:.5;text-decoration:line-through}
@@ -116,6 +129,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
         <p class="lbRank" id="lbMenuRank"></p>
       </div>
       <button id="play" class="play">Jugar</button>
+      <button id="howto" class="howto">¿Cómo se juega?</button>
       <p class="tip">Si dos burbujas se quedan pegadas, se fusionan. Una fusión que da 10 es bonus; una que pasa de 10 se vuelve inestable y explota. Las burbujas punteadas restan, y en Tiempo, el reloj verde te da un segundo más.</p>
     </div>
   </div>
@@ -142,8 +156,13 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
     </div>
   </div>
 
+  <div id="tut" hidden role="status" aria-live="polite">
+    <p class="tutStep" id="tutStep"></p>
+    <p class="tutMsg" id="tutMsg"></p>
+    <div class="tutBtns"><button id="tutNext" hidden>Siguiente</button><button id="tutSkip">Saltar tutorial</button></div>
+  </div>
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.16</div>
+  <div class="ver">v0.17</div>
 </div>
 
 <script>
@@ -393,7 +412,7 @@ const fmtNum = v => v < 0 ? '−' + (-v) : String(v);
 const fmtChain = arr => arr.map((v,i) => i === 0 ? fmtNum(v) : (v < 0 ? ' − ' + (-v) : ' + ' + v)).join('');
 
 // ---------------- lógica ----------------
-function fusible(b){ return !b.dead && b.kind !== 'clock' && b.age > .4 && b.y < H - b.r*.5; }
+function fusible(b){ return !b.dead && b.kind !== 'clock' && b.age > .4 && b.y < H - b.r*.5 && (!st.tut || st.tut.allowFuse); }
 // Se fusionan dos burbujas menores de 10, o una negativa con una inestable (la puede salvar).
 function pairCanFuse(a, b){
   if (!fusible(a) || !fusible(b)) return false;
@@ -406,6 +425,7 @@ function fuse(a,b){
   const v = a.v+b.v, ma=a.r*a.r, mb=b.r*b.r, mt=ma+mb;
   const x=(a.x*ma+b.x*mb)/mt, y=(a.y*ma+b.y*mb)/mt;
   const wasUnstable = a.v > 10 || b.v > 10;
+  if (st.tut) setTimeout(tutFused, 700);
   if (v === 0){  // se anularon
     burst(x,y,COL.fg,14,140); floatText(x,y,'0',COL.fg,22);
     if(!st.demo) tone(320,.12,'sine',.1,.5);
@@ -454,12 +474,13 @@ function onEscape(b){
 function update(dt){
   st.t += dt;
   st.spawnT -= dt;
-  if (st.spawnT <= 0){ spawn(); st.spawnT = lerp(CFG.spawnStart, CFG.spawnMin, diff()) * (.75 + Math.random()*.5) * (st.frenzy ? .6 : 1); }
+  if (st.spawnT <= 0 && !st.tut){ spawn(); st.spawnT = lerp(CFG.spawnStart, CFG.spawnMin, diff()) * (.75 + Math.random()*.5) * (st.frenzy ? .6 : 1); }
 
   const bs = st.bubbles;
   for (const b of bs){
     b.age += dt; b.pulse = Math.max(0, b.pulse - dt*4);
-    b.vy += (-b.rise - b.vy) * .9 * dt;
+    if (b.hoverY != null){ b.vy += ((b.hoverY - b.y)*2.5 - b.vy) * 3 * dt; b.vy = Math.max(-260*S, Math.min(260*S, b.vy)); }
+    else b.vy += (-b.rise - b.vy) * .9 * dt;
     b.vx *= 1 - .8*dt;
     b.vx += Math.sin(st.t*1.7 + b.wob) * 10 * S * dt;
     b.x += b.vx*dt; b.y += b.vy*dt;
@@ -483,7 +504,7 @@ function update(dt){
       touched.add(key);
       let c = st.contacts.get(key); if(!c){ c={a,b,t:0}; st.contacts.set(key,c); }
       c.t += dt;
-      if (impact > CFG.fuseImpact*S || c.t >= CFG.fuseTime){ fuse(a,b); st.contacts.delete(key); }
+      if (impact > CFG.fuseImpact*S || c.t >= CFG.fuseTime || (st.tut && st.tut.allowFuse)){ fuse(a,b); st.contacts.delete(key); }
     }
   }
   for (const [k,c] of st.contacts){
@@ -497,7 +518,7 @@ function update(dt){
   }
   st.bubbles = bs.filter(b=>!b.dead).concat(st.newb); st.newb = [];
 
-  if (!st.demo && st.alive){
+  if (!st.demo && st.alive && !st.tut){
     if (mode==='tiempo'){ st.timer -= dt; if (st.timer <= 0){ st.timer=0; gameOver('Se acabó el tiempo', `Te quedaste en ${st.sum} de 10`); } }
     else if (mode==='reloj'){
       st.clock -= dt; st.lock = Math.max(0, st.lock - dt);
@@ -542,6 +563,7 @@ function relojError(){
 }
 
 function tap(b){
+  if (st.tut && (st.tut.busy || st.tut.noTap)) return;
   if (mode==='reloj' && st.lock > 0){ tone(170,.05,'square',.05); return; }
   b.dead = true;
   st.bubbles = st.bubbles.filter(x=>x!==b);
@@ -572,6 +594,7 @@ function tap(b){
   st.hitstop = .045;
   popSfx(Math.min(st.sum,10)); buzz(14);
   if (st.sum > 10){
+    if (st.tut){ tutFail(); return; }
     if (mode==='reloj'){ relojError(); return; }
     st.endSum = st.sum;
     gameOver('¡Te pasaste!', `${fmtChain(st.chain)} = ${st.sum}`);
@@ -592,13 +615,14 @@ function tap(b){
     st.sum = 0; st.chain = []; st.tenFlash = 1;
     burst(W/2, SAFE.top+62*S, COL.gold, 34, 260);
     arp(); buzz(30);
+    if (st.tut) tutTen();
     if (mode==='tiempo'){ if (st.timer/limit() < .6) calmCue(); st.timer = limit(); }
     else if (mode!=='reloj'){ if (st.pressure > 0) calmCue(); st.pressure = Math.max(0, st.pressure-1); }
   }
 }
 
 function gameOver(reason, detail){
-  if (!st.alive) return;
+  if (!st.alive || st.tut) return;
   const why = reason.startsWith('¡Te pasaste') ? 'pasarse' : reason.startsWith('Se acabó') ? 'tiempo' : reason.startsWith('¡Tiempo') ? 'fin' : 'escapes';
   const result = mode==='reloj' ? st.tens : st.score;
   st.alive = false; st.deadT = 0; st.shake = 14; st.flash = 1;
@@ -640,6 +664,87 @@ function demo(){
   for (let i=0;i<260;i++) update(1/30);
   st.parts=[]; st.texts=[];
 }
+
+// ---------------- tutorial ----------------
+// Pasos jugables: el juego prepara las burbujas y no se puede perder.
+let tutDone = false;
+try { tutDone = localStorage.getItem('pop10-tutorial') === 'done'; } catch(e){}
+const tutEl = document.getElementById('tut'), tutMsg = document.getElementById('tutMsg'),
+      tutStepEl = document.getElementById('tutStep'), tutNextBtn = document.getElementById('tutNext');
+
+function tutSay(text, bad){ tutMsg.textContent = text; tutMsg.classList.toggle('bad', !!bad); }
+function tutClear(){ st.bubbles = []; st.contacts.clear(); st.sum = 0; st.chain = []; st.lastChain = null; }
+// spec: [valor, x (0–1 del ancho), y (0–1 del alto), vx opcional]
+function tutSpawn(specs){
+  for (const [v, fx, fy, vx] of specs){
+    const kind = v < 0 ? 'neg' : 'num', r = bubbleR(kind, v);
+    const b = makeBubble(v, fx*W, H + r + Math.random()*40*S, kind);
+    b.hoverY = fy*H; b.age = 1; b.rise = 0; b.vx = (vx||0)*S;
+    st.bubbles.push(b);
+  }
+}
+const TUT_STEPS = [
+  { msg:'Toca las burbujas para sumar exactamente 10.', hl:[4,6],
+    setup(){ tutSpawn([[4,.3,.62],[6,.7,.64]]); } },
+  { msg:'¡Eso! Ahora vas en 7. Toca solo la que te falta para llegar a 10.', hl:[3],
+    fail:'Te pasaste de 10: en una partida, ahí pierdes. Intenta otra vez.',
+    setup(){ st.sum = 7; st.chain = [7]; tutSpawn([[5,.3,.62],[3,.7,.64]]); } },
+  { msg:'Las burbujas punteadas restan. Vas en 8: ¿cómo llegas a 10?', hl:[-2],
+    fail:'Te pasaste. Primero resta y luego suma.',
+    setup(){ st.sum = 8; st.chain = [8]; tutSpawn([[4,.3,.62],[-2,.7,.64]]); } },
+  { msg:'Cuidado: si dos burbujas se quedan pegadas, se fusionan. Mira…', noTap:true, allowFuse:true,
+    setup(){ tutSpawn([[2,.18,.64, 130],[3,.82,.64,-130]]); } },
+  { msg:'', noTap:true, button:'¡A jugar!',
+    setup(){
+      tutSay(mode === 'tiempo'
+        ? 'En Tiempo, haz cada 10 antes de que se acabe la barra de arriba. El reloj verde te da un segundo más.'
+        : 'En Contra reloj tienes 90 segundos para hacer todos los 10 que puedas. Si te pasas, pierdes uno.');
+    } },
+];
+function tutRun(i){
+  st.tut.i = i; st.tut.busy = false;
+  const step = TUT_STEPS[i];
+  st.tut.noTap = !!step.noTap; st.tut.allowFuse = !!step.allowFuse; st.tut.hl = step.hl || null;
+  tutClear(); st.endSum = null;
+  tutStepEl.textContent = `Paso ${i+1} de ${TUT_STEPS.length}`;
+  if (step.msg) tutSay(step.msg);
+  tutNextBtn.hidden = !step.button; if (step.button) tutNextBtn.textContent = step.button;
+  step.setup();
+}
+function tutTen(){
+  st.tut.busy = true; st.tut.hl = null; tutSay('¡Exacto, 10!');
+  setTimeout(() => { if (st.tut) tutRun(st.tut.i + 1); }, 1300);
+}
+function tutFail(){
+  st.tut.busy = true; st.shake = 8; st.flash = .45; st.endSum = st.sum;
+  tone(110,.3,'square',.18,.5); buzz([60,30,60]);
+  tutSay(TUT_STEPS[st.tut.i].fail || 'Te pasaste. Intenta otra vez.', true);
+  setTimeout(() => { if (st.tut) tutRun(st.tut.i); }, 1900);
+}
+function tutFused(){
+  if (!st.tut || st.tut.i !== 3) return;
+  tutSay('2 + 3 = 5. Si una fusión da 10, es bonus; si pasa de 10, se vuelve inestable y explota.');
+  tutNextBtn.hidden = false; tutNextBtn.textContent = 'Siguiente';
+}
+function tutStart(){
+  ensureAudio();
+  st = newState(false); st.tut = {i:0};
+  document.getElementById('menu').hidden = true; document.getElementById('over').hidden = true;
+  tutEl.hidden = false; musicStart();
+  track('tutorial_start', {mode});
+  tutRun(0);
+}
+function tutFinish(skipped){
+  tutDone = true; try { localStorage.setItem('pop10-tutorial','done'); } catch(e){}
+  track('tutorial_end', {skipped: skipped ? 1 : 0, step: st.tut ? st.tut.i + 1 : 0});
+  tutEl.hidden = true; st.tut = null;
+  start();
+}
+tutNextBtn.addEventListener('click', () => {
+  if (!st.tut) return;
+  if (st.tut.i >= TUT_STEPS.length - 1) tutFinish(false); else tutRun(st.tut.i + 1);
+});
+document.getElementById('tutSkip').addEventListener('click', () => tutFinish(true));
 
 // ---------------- render ----------------
 function drawBubble(b){
@@ -784,6 +889,12 @@ function render(){
     ctx.lineWidth = (4+10*p)*S; ctx.lineCap='round'; ctx.stroke(); ctx.lineCap='butt';
   }
   for (const b of st.bubbles) drawBubble(b);
+  if (st.tut && st.tut.hl && !st.tut.busy){
+    for (const b of st.bubbles){ if (!st.tut.hl.includes(b.v)) continue;
+      const rr = b.r + (9 + 4*Math.sin(st.t*6))*S;
+      ctx.beginPath(); ctx.arc(b.x, b.y, rr, 0, TAU); ctx.strokeStyle = hexA(COL.accent, .85);
+      ctx.lineWidth = 3*S; ctx.setLineDash([6*S,6*S]); ctx.stroke(); ctx.setLineDash([]); }
+  }
   for (const p of st.pops){
     const k = 1 - p.life;
     ctx.globalAlpha = p.life; ctx.strokeStyle = p.c; ctx.lineWidth = 5*S*p.life;
@@ -1024,7 +1135,8 @@ document.querySelectorAll('.modes .mode').forEach(btn => btn.addEventListener('c
   { const p = LB.week && lbPeriod(LB.view); if (p && LB.mine[lbKey(mode,p)] && !LB.rank[lbKey(mode,p)]) lbRank(mode, p); }
   track('select_mode', {mode});
 }));
-document.getElementById('play').addEventListener('click', start);
+document.getElementById('play').addEventListener('click', () => tutDone ? start() : tutStart());
+document.getElementById('howto').addEventListener('click', tutStart);
 document.getElementById('again').addEventListener('click', start);
 document.getElementById('toMenu').addEventListener('click', () => {
   document.getElementById('over').hidden = true; demo();
