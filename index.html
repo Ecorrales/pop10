@@ -116,7 +116,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
         <p class="lbRank" id="lbMenuRank"></p>
       </div>
       <button id="play" class="play">Jugar</button>
-      <p class="tip">Si dos burbujas se quedan pegadas, se fusionan. Una fusión que da 10 es bonus; una que pasa de 10 se vuelve inestable y explota.</p>
+      <p class="tip">Si dos burbujas se quedan pegadas, se fusionan. Una fusión que da 10 es bonus; una que pasa de 10 se vuelve inestable y explota. Las burbujas punteadas restan, y en Tiempo, el reloj verde te da un segundo más.</p>
     </div>
   </div>
 
@@ -143,7 +143,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   </div>
 
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.15</div>
+  <div class="ver">v0.16</div>
 </div>
 
 <script>
@@ -153,7 +153,7 @@ const CFG = {
   fuseTime: 0.38,          // segundos de contacto para que dos burbujas se fusionen
   fuseImpact: 150,         // velocidad de choque (px/s a 400px de ancho) que fusiona al instante
   unstableTime: 2.4,       // segundos que vive una burbuja >10 antes de explotar
-  timeLimit: 7,            // modo Tiempo: segundos por cada 10 al inicio…
+  timeLimit: 8,            // modo Tiempo: segundos por cada 10 al inicio…
   timeLimitMin: 4.5,       // …y al final de la rampa
   unstablePenaltyTime: 1.5,// modo Tiempo: segundos que resta una inestable al explotar
   escapeMax: 6,            // modo Escape: escapes para perder
@@ -161,6 +161,12 @@ const CFG = {
   riseStart: 55, riseMax: 132,       // velocidad de subida (px/s en una pantalla de 800 px de alto)
   rampSeconds: 90,         // tiempo hasta dificultad máxima
   streakWindow: 5,         // segundos entre dieces para mantener la racha
+  // Burbujas especiales
+  specialsAfter: 15,       // segundos de partida antes de que aparezcan
+  negChance: .08,          // probabilidad de que una burbuja nueva sea negativa (−1, −2, −3)
+  clockChance: .05,        // modo Tiempo: probabilidad de burbuja de reloj
+  clockBonus: 1,           // segundos que suma el reloj al 10 en curso
+  clockMaxOver: 3,         // cuánto puede pasar el reloj por encima del límite normal
   // Contra reloj
   relojDuration: 90,       // duración de la partida
   relojFrenzy: 30,         // últimos segundos en frenesí: más burbujas y cada 10 vale doble
@@ -214,7 +220,7 @@ function resize(){
   ctx.setTransform(d,0,0,d,0,0);
   W = r.width; H = r.height; S = W/400;
   readSafe();
-  if (st) st.bubbles.forEach(b => { b.r = radiusFor(b.v); b.x = Math.min(Math.max(b.x, b.r), W - b.r); });
+  if (st) st.bubbles.forEach(b => { b.r = bubbleR(b.kind, b.v); b.x = Math.min(Math.max(b.x, b.r), W - b.r); });
 }
 
 // ---------------- audio / háptico ----------------
@@ -353,12 +359,19 @@ function randVal(){
   const tot = WEIGHTS.reduce((a,b)=>a+b,0); let r=Math.random()*tot;
   for(let v=1; v<=9; v++){ r-=WEIGHTS[v]; if(r<=0) return v; } return 1;
 }
-function makeBubble(v,x,y){
-  return {id:nid++, v, x, y, r:radiusFor(v), vx:0, vy:0, rise:0, age:0, unstable:0, pulse:0, wob:Math.random()*TAU, dead:false};
+function bubbleR(kind, v){ return kind === 'clock' ? radiusFor(4) : radiusFor(Math.abs(v)); }
+const kindOf = v => v < 0 ? 'neg' : 'num';
+function makeBubble(v,x,y,kind){
+  kind = kind || kindOf(v);
+  return {id:nid++, kind, v, x, y, r:bubbleR(kind, v), vx:0, vy:0, rise:0, age:0, unstable:0, pulse:0, wob:Math.random()*TAU, dead:false};
 }
 function spawn(yOverride){
-  const v = randVal(), r = radiusFor(v);
-  const b = makeBubble(v, r + Math.random()*(W-2*r), yOverride ?? H + r);
+  let kind = 'num', v = randVal();
+  const late = st.demo || st.t > CFG.specialsAfter, roll = Math.random();
+  if (late && roll < CFG.negChance){ kind = 'neg'; const q = Math.random(); v = q < .5 ? -1 : q < .85 ? -2 : -3; }
+  else if (late && !st.demo && mode === 'tiempo' && roll < CFG.negChance + CFG.clockChance){ kind = 'clock'; v = 0; }
+  const r = bubbleR(kind, v);
+  const b = makeBubble(v, r + Math.random()*(W-2*r), yOverride ?? H + r, kind);
   b.rise = lerp(CFG.riseStart, CFG.riseMax, diff()) * (H/800) * (.7 + Math.random()*.6);
   b.vy = -b.rise; b.vx = (Math.random()-.5)*40*S;
   if (yOverride != null) b.age = 1;
@@ -371,14 +384,33 @@ function burst(x,y,c,n=14,spd=180){
     st.parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.5+Math.random()*.3,max:.8,c,r:(2+Math.random()*3)*S}); }
 }
 function floatText(x,y,txt,c,size=20){ st.texts.push({x,y,txt,c,size,life:1}); }
+function colorFor(b){
+  if (b.kind === 'clock') return COL.good;
+  if (b.kind === 'neg') return COL.fg;
+  return b.v > 10 ? COL.danger : (PAL[b.v] || COL.fg);
+}
+const fmtNum = v => v < 0 ? '−' + (-v) : String(v);
+const fmtChain = arr => arr.map((v,i) => i === 0 ? fmtNum(v) : (v < 0 ? ' − ' + (-v) : ' + ' + v)).join('');
 
 // ---------------- lógica ----------------
-function canFuse(b){ return !b.dead && b.v < 10 && b.age > .4 && b.y < H - b.r*.5; }
+function fusible(b){ return !b.dead && b.kind !== 'clock' && b.age > .4 && b.y < H - b.r*.5; }
+// Se fusionan dos burbujas menores de 10, o una negativa con una inestable (la puede salvar).
+function pairCanFuse(a, b){
+  if (!fusible(a) || !fusible(b)) return false;
+  if (a.v < 10 && b.v < 10) return true;
+  return (a.kind === 'neg' && b.v > 10) || (b.kind === 'neg' && a.v > 10);
+}
 
 function fuse(a,b){
   a.dead = b.dead = true;
   const v = a.v+b.v, ma=a.r*a.r, mb=b.r*b.r, mt=ma+mb;
   const x=(a.x*ma+b.x*mb)/mt, y=(a.y*ma+b.y*mb)/mt;
+  const wasUnstable = a.v > 10 || b.v > 10;
+  if (v === 0){  // se anularon
+    burst(x,y,COL.fg,14,140); floatText(x,y,'0',COL.fg,22);
+    if(!st.demo) tone(320,.12,'sine',.1,.5);
+    return;
+  }
   const nb = makeBubble(v,x,y);
   nb.vx=(a.vx*ma+b.vx*mb)/mt; nb.vy=(a.vy*ma+b.vy*mb)/mt; nb.rise=Math.max(a.rise,b.rise); nb.age=1; nb.pulse=1;
   if (v === 10){
@@ -392,11 +424,12 @@ function fuse(a,b){
     return;
   }
   if (v > 10){
-    nb.unstable = CFG.unstableTime;
-    floatText(x, y-nb.r-6*S, 'inestable', COL.danger, 16);
+    nb.unstable = wasUnstable ? Math.max(.6, Math.min(...[a,b].filter(q=>q.v>10).map(q=>q.unstable))) : CFG.unstableTime;
+    if (!wasUnstable) floatText(x, y-nb.r-6*S, 'inestable', COL.danger, 16);
     if(!st.demo) tone(140,.2,'sawtooth',.09,1.8);
   } else {
-    burst(x,y,PAL[v],8,90);
+    burst(x,y,colorFor(nb),8,90);
+    if (wasUnstable) floatText(x, y-nb.r-6*S, '¡salvada!', COL.good, 16);
     if(!st.demo) tone(200,.1,'sine',.12,.7);
   }
   st.newb.push(nb);
@@ -445,7 +478,7 @@ function update(dt){
       const vn=(b.vx-a.vx)*nx+(b.vy-a.vy)*ny; let impact=0;
       if (vn < 0){ impact=-vn; const J=-(1.45)*vn/(1/ma+1/mb);
         a.vx-=J*nx/ma; a.vy-=J*ny/ma; b.vx+=J*nx/mb; b.vy+=J*ny/mb; }
-      if (!canFuse(a) || !canFuse(b)) continue;
+      if (!pairCanFuse(a, b)) continue;
       const key = a.id<b.id ? a.id+'-'+b.id : b.id+'-'+a.id;
       touched.add(key);
       let c = st.contacts.get(key); if(!c){ c={a,b,t:0}; st.contacts.set(key,c); }
@@ -512,8 +545,20 @@ function tap(b){
   if (mode==='reloj' && st.lock > 0){ tone(170,.05,'square',.05); return; }
   b.dead = true;
   st.bubbles = st.bubbles.filter(x=>x!==b);
-  st.sum += b.v; st.chain.push(b.v);
-  const c = b.v>10 ? COL.danger : PAL[b.v];
+  const c = colorFor(b);
+  if (b.kind === 'clock'){  // reloj: +1 s al 10 en curso, no toca la suma
+    st.timer = Math.min(st.timer + CFG.clockBonus, limit() + CFG.clockMaxOver);
+    st.pops.push({x:b.x, y:b.y, r:b.r, c, life:1}); burst(b.x,b.y,c,16,160);
+    floatText(b.x, b.y, '+' + CFG.clockBonus + ' s', c, 22);
+    tone(880,.06,'triangle',.15); tone(1320,.08,'triangle',.12,0,.06); buzz(12);
+    st.hitstop = .03;
+    return;
+  }
+  if (b.v < 0 && st.sum === 0){  // restar a cero no hace nada
+    st.pops.push({x:b.x, y:b.y, r:b.r, c, life:1}); burst(b.x,b.y,c,8,90);
+    floatText(b.x, b.y, 'ya estás en 0', COL.muted, 16); tone(200,.06,'sine',.08); return;
+  }
+  st.sum = Math.max(0, st.sum + b.v); st.chain.push(b.v);
   // anillo de membrana + gotas estiradas
   st.pops.push({x:b.x, y:b.y, r:b.r, c, life:1});
   for (let i=0;i<12;i++){ const a = i/12*TAU + Math.random()*.3, s = (220+Math.random()*160)*S;
@@ -529,14 +574,14 @@ function tap(b){
   if (st.sum > 10){
     if (mode==='reloj'){ relojError(); return; }
     st.endSum = st.sum;
-    gameOver('¡Te pasaste!', `${st.chain.join(' + ')} = ${st.sum}`);
+    gameOver('¡Te pasaste!', `${fmtChain(st.chain)} = ${st.sum}`);
     return;
   }
   if (st.sum === 10){
     st.streak = (st.t - st.lastTen <= CFG.streakWindow) ? st.streak+1 : 1;
     st.lastTen = st.t; st.tens++;
     const pts = 100*st.streak; st.score += pts;
-    st.lastChain = {txt: st.chain.join(' + ') + ' = 10', pts, streak:st.streak, life:1.2};
+    st.lastChain = {txt: fmtChain(st.chain) + ' = 10', pts, streak:st.streak, life:1.2};
     if (mode==='reloj'){
       let gain = 1;
       if (st.frenzy){ st.tens++; gain++; }
@@ -599,7 +644,7 @@ function demo(){
 // ---------------- render ----------------
 function drawBubble(b){
   let r = b.r * (1 + .15*b.pulse);
-  const c = b.v > 10 ? COL.danger : PAL[b.v];
+  const c = colorFor(b);
   let blink = false;
   if (b.unstable > 0){
     const k = 1 - b.unstable/CFG.unstableTime;
@@ -607,14 +652,27 @@ function drawBubble(b){
     blink = Math.sin(st.t*(8+k*30)) > 0;
   }
   ctx.beginPath(); ctx.arc(b.x,b.y,r,0,TAU);
-  ctx.fillStyle = hexA(c,.2); ctx.fill();
-  ctx.lineWidth = 3*S; ctx.strokeStyle = blink ? COL.fg : c; ctx.stroke();
+  ctx.fillStyle = hexA(c, b.kind === 'neg' ? .1 : .2); ctx.fill();
+  ctx.lineWidth = 3*S; ctx.strokeStyle = blink ? COL.fg : c;
+  if (b.kind === 'neg') ctx.setLineDash([7*S, 5*S]);
+  ctx.stroke(); ctx.setLineDash([]);
   ctx.beginPath(); ctx.ellipse(b.x-r*.36, b.y-r*.42, r*.26, r*.14, -.6, 0, TAU);
   ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.fill();
-  ctx.fillStyle = COL.fg;
-  ctx.font = `700 ${Math.round(r*(b.v>=10?.78:.95))}px ${FONT}`;
   ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText(b.v, b.x, b.y + r*.05);
+  if (b.kind === 'clock'){
+    // carátula de reloj con un + al centro
+    ctx.strokeStyle = c; ctx.lineCap = 'round';
+    for (let i=0;i<12;i++){ const a = i/12*TAU, r1 = r*(i%3===0 ? .62 : .7), r2 = r*.8;
+      ctx.lineWidth = (i%3===0 ? 3 : 2)*S; ctx.beginPath();
+      ctx.moveTo(b.x+Math.cos(a)*r1, b.y+Math.sin(a)*r1); ctx.lineTo(b.x+Math.cos(a)*r2, b.y+Math.sin(a)*r2); ctx.stroke(); }
+    ctx.lineCap = 'butt';
+    ctx.fillStyle = c; ctx.font = `700 ${Math.round(r*1.05)}px ${FONT}`;
+    ctx.fillText('+', b.x, b.y + r*.04);
+  } else {
+    ctx.fillStyle = COL.fg;
+    ctx.font = `700 ${Math.round(r*(b.v>=10 ? .78 : b.v<0 ? .85 : .95))}px ${FONT}`;
+    ctx.fillText(fmtNum(b.v), b.x, b.y + r*.05);
+  }
   if (b.unstable > 0){
     ctx.beginPath(); ctx.arc(b.x,b.y,r+6*S,-Math.PI/2,-Math.PI/2 + TAU*(b.unstable/CFG.unstableTime));
     ctx.strokeStyle = COL.danger; ctx.lineWidth = 2.5*S; ctx.stroke();
@@ -668,7 +726,7 @@ function drawHUD(){
     ctx.fillText(st.lastChain.txt + s, cx, 128*S);
   } else if (st.chain.length && !st.endSum){
     ctx.fillStyle = COL.muted;
-    ctx.fillText(`${st.chain.join(' + ')}   faltan ${10-st.sum}`, cx, 128*S);
+    ctx.fillText(`${fmtChain(st.chain)}   faltan ${10-st.sum}`, cx, 128*S);
   } else if (!st.endSum){
     ctx.fillStyle = COL.muted; ctx.fillText('suma exactamente 10', cx, 128*S);
   }
@@ -743,7 +801,7 @@ function render(){
   for (const f of st.flyers){ if (f.t >= 1) continue;
     const e = f.t*f.t, x = lerp(f.x0, W/2, e), y = lerp(f.y0, SAFE.top+64*S, e) - Math.sin(f.t*Math.PI)*30*S;
     ctx.fillStyle = f.c; ctx.font = `700 ${Math.round((22 - 6*f.t)*S)}px ${FONT}`; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText('+'+f.v, x, y);
+    ctx.fillText(f.v < 0 ? '−' + (-f.v) : '+' + f.v, x, y);
   }
   for (const t of st.texts){ ctx.globalAlpha = Math.min(1,t.life*1.6); ctx.fillStyle=t.c; ctx.font=`700 ${Math.round(t.size*S)}px ${FONT}`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(t.txt,t.x,t.y); }
   ctx.globalAlpha = 1;
