@@ -143,7 +143,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   </div>
 
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.13</div>
+  <div class="ver">v0.14</div>
 </div>
 
 <script>
@@ -808,6 +808,16 @@ function lbSubscribeAll(){
 function lbInit(){
   setTimeout(() => { if (LB.status === 'loading'){ LB.err = 'tiempo agotado: ¿cargó firebase-config.js?'; LB.status = 'offline'; lbRender(); } }, 8000);
   const go = api => {
+    if (typeof api.weekPeriod !== 'function'){
+      LB.err = 'actualizando el juego…'; LB.status = 'offline'; lbRender();
+      let tried = false; try { tried = sessionStorage.getItem('pop10-reload') === '1'; sessionStorage.setItem('pop10-reload','1'); } catch(e){}
+      if (!tried){
+        const upd = navigator.serviceWorker ? navigator.serviceWorker.getRegistration().then(r => r && r.update()).catch(()=>{}) : Promise.resolve();
+        upd.finally(() => setTimeout(() => location.reload(), 1200));
+      }
+      return;
+    }
+    try { sessionStorage.removeItem('pop10-reload'); } catch(e){}
     LB.api = api;
     api.init().then(uid => {
       LB.uid = uid; LB.status = 'ok';
@@ -980,7 +990,16 @@ if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(cv);
 resize(); demo();
 requestAnimationFrame(frame);
 lbInit();
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+if ('serviceWorker' in navigator){
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;          // primera instalación: no hace falta
+    if (st && !st.demo && st.alive) return;            // no interrumpir una partida
+    reloading = true; location.reload();
+  });
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
 })();
 </script>
 <script type="module" src="leaderboard.js"></script>
