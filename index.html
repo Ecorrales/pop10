@@ -74,6 +74,11 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
 .lb{margin:0 0 16px;text-align:left}
 .lb[hidden]{display:none}
 .lbTitle{margin:0 0 6px;font-size:14px;color:var(--muted);text-align:center}
+.lbTabs{display:flex;gap:6px;justify-content:center;margin:0 0 8px}
+.lbTabs button{font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:transparent;border:2px solid transparent;border-radius:999px;padding:4px 12px;cursor:pointer}
+.lbTabs button.on{color:var(--fg);border-color:var(--accent)}
+.lbRank{margin:8px 0 0;font-size:13.5px;color:var(--muted);text-align:center;line-height:1.35}
+.lbRank:empty{display:none}
 .lb ol{list-style:none;margin:0;padding:0;display:grid;gap:4px}
 .lb li{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:8px;padding:6px 10px;border-radius:12px;background:rgba(127,127,127,.12);font-size:15px}
 .lb li .pos{font-weight:700;color:var(--muted)}
@@ -105,8 +110,10 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
       </div>
       <label class="nick"><span>Tu nombre en la tabla</span><input id="nick" maxlength="16" autocomplete="nickname" enterkeyhint="done" placeholder="Burbuja"></label>
       <div class="lb" id="lbMenu" hidden>
-        <p class="lbTitle">Mejores en <span id="lbModeName">Tiempo</span></p>
+        <p class="lbTitle" id="lbMenuTitle">Mejores en Tiempo</p>
+        <div class="lbTabs" role="tablist"><button data-period="week" class="on" role="tab">Esta semana</button><button data-period="all" role="tab">Histórico</button></div>
         <ol id="lbMenuList"></ol>
+        <p class="lbRank" id="lbMenuRank"></p>
       </div>
       <button id="play" class="play">Jugar</button>
       <p class="tip">Si dos burbujas se quedan pegadas, se fusionan. Una fusión que da 10 es bonus; una que pasa de 10 se vuelve inestable y explota.</p>
@@ -125,7 +132,9 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
       <p class="new" id="newBest" hidden>Nuevo récord</p>
       <div class="lb" id="lbOver" hidden>
         <p class="lbTitle" id="lbOverTitle">Mejores en Tiempo</p>
+        <div class="lbTabs" role="tablist"><button data-period="week" class="on" role="tab">Esta semana</button><button data-period="all" role="tab">Histórico</button></div>
         <ol id="lbOverList"></ol>
+        <p class="lbRank" id="lbOverRank"></p>
         <p class="lbHint" id="lbHint"></p>
       </div>
       <button id="again" class="play">Otra vez</button>
@@ -134,7 +143,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
   </div>
 
   <button id="mute" aria-label="Música encendida" aria-pressed="false">♪</button>
-  <div class="ver">v0.12</div>
+  <div class="ver">v0.13</div>
 </div>
 
 <script>
@@ -757,8 +766,13 @@ function frame(now){
 }
 
 // ---------------- tabla global (Firebase, ver leaderboard.js) ----------------
-const LB = {api:null, uid:null, rows:{tiempo:[], reloj:[]}, mine:{tiempo:0, reloj:0}, status:'loading'};
+// Dos tablas por modo: la de esta semana (se reinicia el lunes 00:00, hora de México) y la histórica.
+const LB = {api:null, uid:null, status:'loading', err:null, rejected:false,
+  view:'week', week:null, rows:{}, mine:{}, rank:{}, unsubs:[]};
 const MODE_NAME = {tiempo:'Tiempo', reloj:'Contra reloj'};
+const LB_MODES = ['tiempo','reloj'];
+const lbKey = (m,p) => m + '/' + p;
+const lbPeriod = view => view === 'week' ? LB.week : 'all';
 
 function cleanNick(v){ return String(v||'').replace(/[\u0000-\u001f\u007f<>]/g,'').replace(/\s+/g,' ').trim().slice(0,16); }
 const nickInput = document.getElementById('nick');
@@ -773,21 +787,31 @@ nickInput.addEventListener('change', () => {
 nickInput.addEventListener('keydown', e => { if (e.key === 'Enter') nickInput.blur(); });
 nickInput.addEventListener('input', () => { const v = cleanNick(nickInput.value); if (v){ nick = v; try{ localStorage.setItem('pop10-nick', nick); }catch(e){} } });
 
+function lbSubscribeAll(){
+  LB.unsubs.forEach(u => { try { u(); } catch(e){} }); LB.unsubs = [];
+  LB.week = LB.api.weekPeriod();
+  for (const m of LB_MODES) for (const p of ['all', LB.week]){
+    const k = lbKey(m,p);
+    LB.rows[k] = LB.rows[k] || []; LB.mine[k] = LB.mine[k] || 0;
+    try {
+      LB.unsubs.push(LB.api.subscribe(m, p, rows => {
+        LB.rows[k] = rows;
+        const me = rows.find(r => r.id === LB.uid);
+        if (me) LB.mine[k] = Math.max(LB.mine[k], me.score);
+        lbRender();
+      }, err => { LB.err = err && (err.code || err.message); LB.status = 'offline'; lbRender(); }));
+    } catch(err){ LB.err = err.message; LB.status = 'offline'; }
+    LB.api.getMine(m, p).then(sc => { LB.mine[k] = Math.max(LB.mine[k], sc); if (sc > 0) lbRank(m, p); }).catch(()=>{});
+  }
+}
+
 function lbInit(){
   setTimeout(() => { if (LB.status === 'loading'){ LB.err = 'tiempo agotado: ¿cargó firebase-config.js?'; LB.status = 'offline'; lbRender(); } }, 8000);
   const go = api => {
     LB.api = api;
     api.init().then(uid => {
       LB.uid = uid; LB.status = 'ok';
-      for (const m of ['tiempo','reloj']){
-        api.subscribe(m, rows => {
-          LB.rows[m] = rows;
-          const me = rows.find(r => r.id === LB.uid);
-          if (me) LB.mine[m] = Math.max(LB.mine[m], me.score);
-          lbRender();
-        }, err => { LB.err = err && (err.code || err.message); LB.status = 'offline'; lbRender(); });
-        api.getMine(m).then(sc => { LB.mine[m] = Math.max(LB.mine[m], sc); }).catch(()=>{});
-      }
+      lbSubscribeAll();
       lbRender();
     }).catch(err => { console.warn('Pop10 leaderboard:', err); LB.err = err && (err.code || err.message); LB.status = 'offline'; lbRender(); });
   };
@@ -795,15 +819,25 @@ function lbInit(){
   else window.addEventListener('poplb-ready', () => go(window.PopLB), {once:true});
 }
 
+// Tu lugar en la tabla completa (no solo el top 20).
+async function lbRank(m, p){
+  const k = lbKey(m,p), v = LB.mine[k];
+  if (!LB.api || !v) return;
+  try { LB.rank[k] = await LB.api.rankOf(m, p, v); lbRender(); } catch(e){ console.warn('Pop10 rank:', e); }
+}
+
 async function lbSubmit(m){
   // En Contra reloj se compite por dieces; en Tiempo, por puntos.
   const value = m === 'reloj' ? st.tens : st.score;
-  if (!LB.api || LB.status !== 'ok' || value <= 0 || value <= LB.mine[m]) return;
-  const prev = LB.mine[m]; LB.mine[m] = value;
-  try {
-    await LB.api.submit(m, {name:nick, score:value, tens:st.tens, bonus10:st.bonus10, duration:Math.max(1, Math.floor(st.t))});
-  } catch(e){
-    console.warn('Pop10 submit:', e); LB.mine[m] = prev; LB.status = 'rejected'; lbRender();
+  if (!LB.api || LB.status !== 'ok' || value <= 0) return;
+  if (LB.api.weekPeriod() !== LB.week) lbSubscribeAll(); // cambió la semana con el juego abierto
+  const entry = {name:nick, score:value, tens:st.tens, bonus10:st.bonus10, duration:Math.max(1, Math.floor(st.t))};
+  for (const p of ['all', LB.week]){
+    const k = lbKey(m,p);
+    if (value <= LB.mine[k]) continue;
+    const prev = LB.mine[k]; LB.mine[k] = value;
+    try { await LB.api.submit(m, p, entry); lbRank(m, p); }
+    catch(e){ console.warn('Pop10 submit:', e); LB.mine[k] = prev; LB.rejected = true; lbRender(); }
   }
 }
 
@@ -816,7 +850,11 @@ function lbFill(ol, rows, myIdx){
     const c = document.createElement('span'); c.className='sc'; c.textContent = score;
     li.append(a,b,c); ol.append(li);
   };
-  if (!rows.length){ const li=document.createElement('li'); li.className='empty'; li.textContent='Nadie ha jugado este modo todavía. Sé el primero.'; ol.append(li); return; }
+  if (!rows.length){
+    const li=document.createElement('li'); li.className='empty';
+    li.textContent = LB.view==='week' ? 'Nadie ha jugado esta semana. Sé el primero.' : 'Nadie ha jugado este modo todavía. Sé el primero.';
+    ol.append(li); return;
+  }
   const nm = r => r.id === LB.uid ? 'Tú' : (r.name || 'Alguien');
   rows.slice(0,5).forEach((r,i) => add(i+1, nm(r), r.score, r.id===LB.uid ? 'me' : ''));
   if (myIdx >= 5){
@@ -825,14 +863,26 @@ function lbFill(ol, rows, myIdx){
   }
 }
 
+function fmtLeft(ms){
+  ms = Math.max(0, ms);
+  const d = Math.floor(ms/86400000), h = Math.floor(ms%86400000/3600000), m = Math.floor(ms%3600000/60000);
+  return d > 0 ? `${d} d ${h} h` : h > 0 ? `${h} h ${m} min` : `${m} min`;
+}
+
 function lbRender(){
   const show = LB.status !== 'loading';
   document.getElementById('lbMenu').hidden = !show;
   document.getElementById('lbOver').hidden = !show;
   if (!show) return;
-  document.getElementById('lbModeName').textContent = MODE_NAME[mode];
-  document.getElementById('lbOverTitle').textContent = 'Mejores en ' + MODE_NAME[mode];
-  const rows = LB.rows[mode].slice().sort((a,b)=>b.score-a.score);
+  document.querySelectorAll('.lbTabs button').forEach(b => {
+    const on = b.dataset.period === LB.view; b.classList.toggle('on', on); b.setAttribute('aria-selected', on);
+  });
+  const title = 'Mejores en ' + MODE_NAME[mode];
+  document.getElementById('lbMenuTitle').textContent = title;
+  document.getElementById('lbOverTitle').textContent = title;
+
+  const p = lbPeriod(LB.view), k = lbKey(mode, p);
+  const rows = (LB.rows[k] || []).slice().sort((a,b)=>b.score-a.score);
   const myIdx = rows.findIndex(r => r.id === LB.uid);
   if (LB.status === 'offline' && !rows.length){
     for (const id of ['lbMenuList','lbOverList']){
@@ -843,13 +893,38 @@ function lbRender(){
     lbFill(document.getElementById('lbMenuList'), rows, myIdx);
     lbFill(document.getElementById('lbOverList'), rows, myIdx);
   }
+
+  // a quién tienes que pasar
+  const unit = n => mode === 'reloj' ? (n > 1 ? ' dieces' : ' diez') : '';
+  const mine = LB.mine[k] || 0;
   let hint = '';
-  if (LB.status === 'rejected') hint = 'No se pudo guardar tu puntaje en la tabla.';
-  else if (myIdx === 0) hint = 'Vas en primer lugar.';
-  else if (myIdx > 0){ const above = rows[myIdx-1]; { const n = above.score - rows[myIdx].score + 1; hint = `Te faltan ${n} ${mode==='reloj' ? (n>1?'dieces':'diez') : ''} para pasar a ${above.name || 'Alguien'}.`.replace('  ',' '); } }
-  else if (rows.length >= 20) hint = `Te faltan ${rows[rows.length-1].score - LB.mine[mode] + 1} para entrar al top 20.`;
+  if (LB.rejected) hint = 'No se pudo guardar tu puntaje en la tabla.';
+  else if (myIdx === 0) hint = LB.view==='week' ? 'Vas en primer lugar esta semana.' : 'Vas en primer lugar.';
+  else if (myIdx > 0){ const above = rows[myIdx-1], n = above.score - rows[myIdx].score + 1; hint = `Te faltan ${n}${unit(n)} para pasar a ${above.name || 'Alguien'}.`; }
+  else if (rows.length >= 20 && mine > 0){ const n = rows[rows.length-1].score - mine + 1; hint = `Te faltan ${n}${unit(n)} para entrar al top 20.`; }
   document.getElementById('lbHint').textContent = hint;
+
+  // tu lugar en toda la tabla + cuándo se reinicia la semana
+  const parts = [];
+  const rk = LB.rank[k];
+  if (!mine) { if (LB.view === 'week' && LB.status === 'ok') parts.push('Aún no juegas esta semana.'); }
+  else if (rk && rk.total){
+    let t = `Tu lugar: ${rk.rank} de ${rk.total}`;
+    const pct = Math.floor((rk.total - rk.rank) / rk.total * 100);
+    if (rk.total >= 5 && rk.rank > 1 && pct > 0) t += `, mejor que el ${pct}% de los jugadores`;
+    parts.push(t + '.');
+  }
+  if (LB.view === 'week' && LB.api && LB.status === 'ok') parts.push('Se reinicia en ' + fmtLeft(LB.api.weekEndsAt() - Date.now()) + '.');
+  const rankTxt = parts.join(' ');
+  document.getElementById('lbMenuRank').textContent = rankTxt;
+  document.getElementById('lbOverRank').textContent = rankTxt;
 }
+
+document.querySelectorAll('.lbTabs button').forEach(b => b.addEventListener('click', () => {
+  LB.view = b.dataset.period; lbRender();
+  const p = lbPeriod(LB.view);
+  if (LB.api && LB.mine[lbKey(mode,p)] && !LB.rank[lbKey(mode,p)]) lbRank(mode, p);
+}));
 
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
@@ -878,6 +953,7 @@ document.querySelectorAll('.modes .mode').forEach(btn => btn.addEventListener('c
   mode = btn.dataset.mode;
   document.querySelectorAll('.modes .mode').forEach(b => { const on=b===btn; b.classList.toggle('on',on); b.setAttribute('aria-checked',on); });
   lbRender();
+  { const p = LB.week && lbPeriod(LB.view); if (p && LB.mine[lbKey(mode,p)] && !LB.rank[lbKey(mode,p)]) lbRank(mode, p); }
   track('select_mode', {mode});
 }));
 document.getElementById('play').addEventListener('click', start);
